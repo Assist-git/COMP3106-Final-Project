@@ -20,5 +20,5 @@ if __name__ == "__main__":
     Q = train_qlearning(env_wrapper, raw_rlgym_env, config)
 
     # save Q-table
-    save_q_table(Q, "q_table.pkl")
+    save_q_table(Q, "data/q_table.pkl")
     print("Training finished and Q-table saved.")

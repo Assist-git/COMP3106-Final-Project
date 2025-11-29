@@ -62,5 +62,6 @@ def build_rlgym_v2_env():
     )
 
     rlgym_env.reset()
+    wrapped = RLGymV2GymWrapper(rlgym_env)
 
-    return RLGymV2GymWrapper(rlgym_env)
+    return wrapped, rlgym_env

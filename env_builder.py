@@ -10,6 +10,9 @@ def build_rlgym_v2_env():
     from rlgym.rocket_league import common_values
     from rlgym_ppo.util import RLGymV2GymWrapper
 
+    from rewards import InAirReward, SpeedTowardBallReward, VelocityBallToGoalReward, TouchReward
+    from renderer import RocketSimVisRenderer
+
     spawn_opponents = False
     team_size = 1
     blue_team_size = team_size

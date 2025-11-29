@@ -1,7 +1,7 @@
 import numpy as np
 import random
 from collections import defaultdict
-from actions import ACTIONS
+from actions import ACTIONS, ACTION_CONTROL_MAP
 from discretizer import discretize_state
 from utils import normalize_reward, to_bool
 import time

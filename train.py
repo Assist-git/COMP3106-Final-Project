@@ -2,6 +2,12 @@ from env_builder import build_rlgym_v2_env
 from qlearning import train_qlearning
 from utils import save_q_table
 
+# lookup table mapping info to see actions
+from rlgym.rocket_league.action_parsers import LookupTableAction
+parser = LookupTableAction()
+for i, act in enumerate(parser._lookup_table[:20]):
+    print(i, act)
+
 if __name__ == "__main__":
     # build both wrapper and raw env
     env_wrapper, raw_rlgym_env = build_rlgym_v2_env()
@@ -10,8 +16,8 @@ if __name__ == "__main__":
         "alpha": 0.1,
         "gamma": 0.99,
         "epsilon": 1.0,
-        "epsilon_min": 0.05,
-        "epsilon_decay": 0.995,
+        "epsilon_min": 0.1,
+        "epsilon_decay": 0.999,
         "num_episodes": 200,
         "bucket_size": 1.0,
         "max_steps": 2000,

@@ -17,7 +17,7 @@ def build_rlgym_v2_env():
     team_size = 1
     blue_team_size = team_size
     orange_team_size = team_size if spawn_opponents else 0
-    action_repeat = 8
+    action_repeat = 1
     no_touch_timeout_seconds = 30
     game_timeout_seconds = 300
 

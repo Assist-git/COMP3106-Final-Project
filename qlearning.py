@@ -6,6 +6,18 @@ from discretizer import discretize_state
 from utils import normalize_reward, to_bool
 import time
 
+_prev_control = np.zeros(8, dtype=np.float32)
+
+def smooth_control(new, alpha=0.4):
+    """
+    Blend new control vector with previous one for smoother visualization.
+    alpha=0.4 means 40% new, 60% old.
+    """
+    global _prev_control
+    new = np.array(new, dtype=np.float32)
+    _prev_control = alpha * new + (1 - alpha) * _prev_control
+    return _prev_control
+
 def train_qlearning(env_wrapper, raw_rlgym_env, config):
     alpha = config.get("alpha", 0.1)
     gamma = config.get("gamma", 0.99)
@@ -26,7 +38,7 @@ def train_qlearning(env_wrapper, raw_rlgym_env, config):
     for ep in range(1, num_episodes + 1):
         obs = env_wrapper.reset()
         obs_agent = obs[0]
-        s = discretize_state(obs_agent, bucket_size=bucket_size)
+        s = discretize_state(obs_agent, dist_bucket=500.0, speed_bucket=500.0)
 
         done = False
         ep_return = 0.0
@@ -45,6 +57,18 @@ def train_qlearning(env_wrapper, raw_rlgym_env, config):
             # normalize reward and done
             r = normalize_reward(reward)
             done = to_bool(terminated) or to_bool(truncated)
+            
+            # slower steps to see what bot is doing in visualizer
+            if steps % 4 == 0:
+                try:
+                    raw_vec = ACTION_CONTROL_MAP[int(a)]
+                    control_vec = smooth_control(raw_vec)
+                    shared_info = {"controls": {0: control_vec}}
+                    raw_rlgym_env.renderer.render(raw_rlgym_env.state, shared_info)
+
+                    time.sleep(0.02)
+                except Exception as e:
+                    print("Renderer error (non-fatal):", e)
 
             # send controls to RocketSimVis for visualization
             try:
@@ -55,7 +79,7 @@ def train_qlearning(env_wrapper, raw_rlgym_env, config):
                 pass
 
             next_obs_agent = next_obs[0]
-            s_next = discretize_state(next_obs_agent, bucket_size=bucket_size)
+            s_next = discretize_state(next_obs_agent, dist_bucket=500.0, speed_bucket=500.0)
 
             best_next = float(np.max(Q[s_next])) if s_next in Q else 0.0
             a_idx = ACTIONS.index(a)

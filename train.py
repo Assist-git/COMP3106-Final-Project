@@ -17,7 +17,7 @@ if __name__ == "__main__":
         "gamma": 0.99,
         "epsilon": 1.0,
         "epsilon_min": 0.1,
-        "epsilon_decay": 0.995,
+        "epsilon_decay": 0.999,
         "num_episodes": 1000,
         "bucket_size": 1.0,
         "max_steps": 5000,

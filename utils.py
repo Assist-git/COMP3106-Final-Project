@@ -2,15 +2,35 @@ import numpy as np
 import pickle
 from typing import Any
 
-def normalize_reward(reward) -> float:
-    # convert wrapper reward (dict/array/list/scalar) to a float for single agent
+def normalize_reward(reward, agent_index: int = 0) -> float:
+    # rlgym returns { 'blue-0': value }
     if isinstance(reward, dict):
-        return float(next(iter(reward.values())))
+        if len(reward) == 0:
+            return 0.0
+        try:
+            # handle both int and str keys
+            if agent_index in reward:
+                return float(reward[agent_index])
+            else:
+                return float(list(reward.values())[0])
+        except Exception:
+            return 0.0
+
+    # numpy array case
     if isinstance(reward, np.ndarray):
-        return float(reward.item()) if reward.size == 1 else float(reward[0])
+        if reward.size == 0:
+            return 0.0
+        return float(reward.item()) if reward.size == 1 else float(reward[agent_index])
+
+    # list/tuple case
     if isinstance(reward, (list, tuple)):
-        return float(reward[0])
-    return float(reward)
+        return float(reward[agent_index]) if len(reward) > agent_index else 0.0
+
+    # scalar case
+    try:
+        return float(reward)
+    except Exception:
+        return 0.0
 
 def to_bool(x) -> bool:
     # convert terminated/truncated (dict/array/list/scalar) to a single bool

@@ -10,7 +10,7 @@ def build_rlgym_v2_env():
     from rlgym.rocket_league import common_values
     from rlgym_ppo.util import RLGymV2GymWrapper
 
-    from rewards import InAirReward, SpeedTowardBallReward, VelocityBallToGoalReward, TouchReward
+    from rewards import TouchReward, BoostAlignmentReward, SpeedTowardBallReward, FacingBallReward, SteeringTowardBallReward
     from renderer import RocketSimVisRenderer
 
     spawn_opponents = False
@@ -29,11 +29,11 @@ def build_rlgym_v2_env():
     )
 
     reward_fn = CombinedReward(
-        (InAirReward(), 0.15),
-        (SpeedTowardBallReward(), 5),
-        (VelocityBallToGoalReward(), 10),
+        (SpeedTowardBallReward(), 0.1),
         (TouchReward(), 50),
-        (GoalReward(), 500.0)
+        (BoostAlignmentReward(), 0.1),
+        (FacingBallReward(), 0.05),
+        (SteeringTowardBallReward(coef=2.0, clip=0.5, min_dist=3.0), 1.0)
     )
 
     obs_builder = DefaultObs(zero_padding=3,
@@ -61,7 +61,18 @@ def build_rlgym_v2_env():
         renderer=RocketSimVisRenderer(),
     )
 
+    # extract the lookup table from the lookup parser instance
+    try:
+        if hasattr(LookupTableAction(), "lookup_table"):
+            table = LookupTableAction().lookup_table
+        elif hasattr(LookupTableAction(), "table"):
+            table = LookupTableAction().table
+        else:
+            table = None
+    except Exception:
+        table = None
+
     rlgym_env.reset()
     wrapped = RLGymV2GymWrapper(rlgym_env)
 
-    return wrapped, rlgym_env
+    return wrapped, rlgym_env, table

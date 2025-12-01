@@ -15,7 +15,7 @@ if __name__ == "__main__":
     config = {
         "alpha": 0.1,
         "gamma": 0.99,
-        "epsilon": 0.6,
+        "epsilon": 1.0,
         "epsilon_min": 0.1,
         "epsilon_decay": 0.995,
         "num_episodes": 1000,

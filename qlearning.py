@@ -41,7 +41,7 @@ def get_lookup_table_from_parser(parser):
 
 def train_qlearning(env_wrapper, raw_rlgym_env, config, lookup_table=None):
     alpha = config.get("alpha", 0.1)
-    gamma = config.get("gamma", 0.6)
+    gamma = config.get("gamma", 1.0)
     epsilon = config.get("epsilon", 1.0)
     epsilon_min = config.get("epsilon_min", 0.1)
     epsilon_decay = config.get("epsilon_decay", 0.995)

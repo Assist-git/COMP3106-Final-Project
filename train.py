@@ -13,12 +13,12 @@ if __name__ == "__main__":
     env_wrapper, raw_rlgym_env, lookup_table = build_rlgym_v2_env()
 
     config = {
-        "alpha": 0.1,
+        "alpha": 0.15,
         "gamma": 0.99,
         "epsilon": 1.0,
-        "epsilon_min": 0.1,
-        "epsilon_decay": 0.999,
-        "num_episodes": 1000,
+        "epsilon_min": 0.05,
+        "epsilon_decay": 0.9975,
+        "num_episodes": 2000,  
         "bucket_size": 1.0,
         "max_steps": 5000,
     }

@@ -67,7 +67,6 @@ def train_qlearning(env_wrapper, raw_rlgym_env, config, lookup_table=None):
     # Q uses reduced action space
     Q = defaultdict(lambda: np.zeros(n_reduced, dtype=np.float32))
 
-    # Debug prints
     obs = env_wrapper.reset()
 
     episode_stats = []
@@ -90,9 +89,14 @@ def train_qlearning(env_wrapper, raw_rlgym_env, config, lookup_table=None):
             ep_return = 0.0
             steps = 0
             touches = 0
+            dist_sum = 0.0
+            align_sum = 0.0
+            forward_action_count = 0
+            time_to_first_touch = None
+            had_terminated = False
 
             while not done and steps < max_steps:
-                # use the steering-aware selector
+                # use the steering aware selector
                 a_reduced, env_action = select_action(
                     s=s,
                     Q=Q,
@@ -115,7 +119,10 @@ def train_qlearning(env_wrapper, raw_rlgym_env, config, lookup_table=None):
 
                 # normalize reward and done
                 r = normalize_reward(reward)
-                done = to_bool(terminated) or to_bool(truncated)
+                this_terminated = to_bool(terminated)
+                this_truncated = to_bool(truncated)
+                done = this_terminated or this_truncated
+                had_terminated = had_terminated or this_terminated
 
                 # visualize using env's lookup table
                 if tbl is not None and steps % 4 == 0:
@@ -126,6 +133,31 @@ def train_qlearning(env_wrapper, raw_rlgym_env, config, lookup_table=None):
                         raw_rlgym_env.renderer.render(raw_rlgym_env.state, shared_info)
                     except Exception as e:
                         print("Renderer error (non-fatal):", e)
+
+                # collect additional data (distance, alignment, forward-action)
+                try:
+                    car = raw_rlgym_env.state.cars[agent_key]
+                    to_ball = raw_rlgym_env.state.ball.position - car.physics.position
+                    dist = float(np.linalg.norm(to_ball))
+                    to_ball_norm = to_ball / (dist + 1e-8)
+                    forward_vec = car.physics.forward
+                    alignment = float(np.clip(np.dot(forward_vec, to_ball_norm), -1.0, 1.0))
+                except Exception:
+                    dist = 0.0
+                    alignment = 0.0
+
+                dist_sum += dist
+                align_sum += alignment
+
+                # count forward actions to measure straight driving
+                try:
+                    if tbl is not None:
+                        env_vec = tbl[env_action]
+                        throttle_val = float(env_vec[0])
+                        if throttle_val >= 0.9:
+                            forward_action_count += 1
+                except Exception:
+                    pass
 
                 # update state and Q
                 next_obs_agent = next_obs[0]
@@ -148,46 +180,73 @@ def train_qlearning(env_wrapper, raw_rlgym_env, config, lookup_table=None):
                 if new_touches > 0:
                     touches += new_touches
                     print(f"Episode {ep}, Step {steps}, new_touches={new_touches}, total_touches={touches}, ep_return={ep_return:.3f}")
+                    if time_to_first_touch is None:
+                        time_to_first_touch = steps
 
                 prev_ball_touches = current_touches
                 steps += 1
 
             epsilon = max(epsilon_min, epsilon * epsilon_decay)
 
-            episode_stats.append((ep, ep_return, touches))
+            # per episode data
+            avg_dist = float(dist_sum / steps) if steps > 0 else 0.0
+            avg_align = float(align_sum / steps) if steps > 0 else 0.0
+            pct_forward = float(forward_action_count / steps) if steps > 0 else 0.0
+
+            episode_stats.append({
+                "episode": ep,
+                "return": ep_return,
+                "touches": touches,
+                "avg_dist": avg_dist,
+                "avg_align": avg_align,
+                "pct_forward": pct_forward,
+                "time_to_first_touch": (time_to_first_touch if time_to_first_touch is not None else -1),
+                "terminated": bool(had_terminated),
+            })
 
             if ep % 10 == 0:
                 print(f"Episode {ep}: return={ep_return:.3f}, touches={touches}, steps={steps}, epsilon={epsilon:.3f}")
-                avg_touches = np.mean([t for _, _, t in episode_stats[-10:]])
+                recent = episode_stats[-10:]
+                if len(recent) > 0:
+                    avg_touches = np.mean([e["touches"] for e in recent])
+                else:
+                    avg_touches = 0.0
                 print(f"last 10 episodes: avg touches={avg_touches: .2f}")
 
     except KeyboardInterrupt:
         print("training interrupt, saving q table")
         return Q
 
-    # save stats
-    with open("data/episode_stats.csv", "w", newline="") as f:
-        writer = csv.writer(f)
-        writer.writerow(["episode", "return", "touches"])
-        writer.writerows(episode_stats)
+    # save stats CSV file
+    if len(episode_stats) > 0:
+        keys = list(episode_stats[0].keys())
+        with open("data/episode_stats.csv", "w", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=keys)
+            writer.writeheader()
+            writer.writerows(episode_stats)
 
-    episodes = [ep for ep, ret, t in episode_stats]
-    touch_counts = [t for ep, ret, t in episode_stats]
+    # for plotting
+    episodes = [e["episode"] for e in episode_stats]
+    touch_counts = [e["touches"] for e in episode_stats]
+    avg_aligns = [e["avg_align"] for e in episode_stats]
 
     window = 20
+    plt.figure(figsize=(12,6))
+    ax1 = plt.gca()
+    ax1.plot(episodes, touch_counts, label="Touches per episode", alpha=0.6)
     if len(touch_counts) >= window:
         moving_avg = np.convolve(touch_counts, np.ones(window)/window, mode="valid")
-        plt.figure(figsize=(10,5))
-        plt.plot(episodes, touch_counts, label="Touches per episode", alpha=0.5)
-        plt.plot(episodes[window-1:], moving_avg, label=f"{window}-episode moving average", color="red", linewidth=2)
-    else:
-        plt.figure(figsize=(10,5))
-        plt.plot(episodes, touch_counts, label="Touches per episode", alpha=0.5)
+        ax1.plot(episodes[window-1:], moving_avg, label=f"{window}-episode moving avg", color="red", linewidth=2)
+    ax1.set_xlabel("Episode")
+    ax1.set_ylabel("Touches")
 
-    plt.xlabel("Episode")
-    plt.ylabel("Touches")
-    plt.title("Ball touches over training")
-    plt.legend()
+    ax2 = ax1.twinx()
+    ax2.plot(episodes, avg_aligns, label="Avg alignment", color="green", alpha=0.6)
+    ax2.set_ylabel("Avg alignment (dot)")
+
+    ax1.legend(loc="upper left")
+    ax2.legend(loc="upper right")
+    plt.title("Training diagnostics: touches and average alignment")
     plt.grid(True)
     plt.show()
 

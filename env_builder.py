@@ -10,7 +10,7 @@ def build_rlgym_v2_env():
     from rlgym.rocket_league import common_values
     from rlgym_ppo.util import RLGymV2GymWrapper
 
-    from rewards import TouchReward, BoostAlignmentReward, SpeedTowardBallReward, FacingBallReward, SteeringTowardBallReward
+    from rewards import TouchReward, BoostAlignmentReward, SpeedTowardBallReward, FacingBallReward, SteeringTowardBallReward, BallToGoalReward
     from renderer import RocketSimVisRenderer
 
     spawn_opponents = False
@@ -29,8 +29,9 @@ def build_rlgym_v2_env():
     )
 
     reward_fn = CombinedReward(
-        (SpeedTowardBallReward(), 0.1),
+        (SpeedTowardBallReward(), 0.2),
         (TouchReward(), 50),
+        (BallToGoalReward(), 0.5),
         (BoostAlignmentReward(), 0.1),
         (FacingBallReward(), 0.05),
         (SteeringTowardBallReward(coef=2.0, clip=0.5, min_dist=3.0), 1.0)

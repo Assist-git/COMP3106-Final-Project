@@ -4,7 +4,6 @@ def discretize_state(obs_agent: np.ndarray,
                     dist_bucket: float = 500.0,
                     speed_bucket: float = 250.0) -> tuple:
 
-    # replaces indices with correct slices after inspecting obs_agent
     car_pos = obs_agent[0:3] # car position (x,y,z)
     ball_pos = obs_agent[6:9] # ball position (x,y,z)
     car_lin_vel = obs_agent[12:15] # car linear velocity (x,y,z)

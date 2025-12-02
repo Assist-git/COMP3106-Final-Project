@@ -12,10 +12,10 @@ def select_action(
     reduced_to_env,
     env_to_reduced,
     n_reduced,
-    turn_bias=0.85,
-    angle_threshold=0.12,
+    turn_bias=0.65,
+    angle_threshold=0.3,
     close_thresh=3.0,
-    hysteresis_steps=6 
+    hysteresis_steps=8
 ):
     left_reduced = []
     right_reduced = []
@@ -89,7 +89,8 @@ def select_action(
                     else:
                         a_reduced = random.randrange(n_reduced)
             else:
-                if forward_reduced and random.random() < 0.9:
+                # favor forward driving when roughly aligned with ball
+                if forward_reduced and random.random() < 0.95:
                     a_reduced = random.choice(forward_reduced)
                 else:
                     a_reduced = random.randrange(n_reduced)

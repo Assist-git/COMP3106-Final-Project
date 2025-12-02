@@ -4,6 +4,7 @@ from rlgym.rocket_league.api import GameState
 from rlgym.rocket_league import common_values
 import numpy as np
 
+# reward when car moves toward ball
 class SpeedTowardBallReward(RewardFunction[AgentID, GameState, float]):
     def reset(self, agents, initial_state, shared_info):
         return
@@ -23,48 +24,28 @@ class SpeedTowardBallReward(RewardFunction[AgentID, GameState, float]):
 
             dir_to_ball = pos_diff / dist
             speed_toward_ball = float(np.dot(car_phys.linear_velocity, dir_to_ball))
-            shaped = max(speed_toward_ball / common_values.CAR_MAX_SPEED, 0.0)
-            rewards[agent] = shaped * 0.1
-        return rewards
-
-"""
-class InAirReward(RewardFunction[AgentID, GameState, float]):
-    
-    def reset(self, agents: List[AgentID], initial_state: GameState, shared_info: Dict[str, Any]) -> None:
-        pass
-    
-    def get_rewards(self, agents: List[AgentID], state: GameState, is_terminated: Dict[AgentID, bool],
-                    is_truncated: Dict[AgentID, bool], shared_info: Dict[str, Any]) -> Dict[AgentID, float]:
-        return {agent: float(not state.cars[agent].on_ground) for agent in agents}
-"""
-
-"""
-class VelocityBallToGoalReward(RewardFunction[AgentID, GameState, float]):
-    
-    def reset(self, agents: List[AgentID], initial_state: GameState, shared_info: Dict[str, Any]) -> None:
-        pass
-    
-    def get_rewards(self, agents: List[AgentID], state: GameState, is_terminated: Dict[AgentID, bool],
-                    is_truncated: Dict[AgentID, bool], shared_info: Dict[str, Any]) -> Dict[AgentID, float]:
-        rewards = {}
-        for agent in agents:
-            car = state.cars[agent]
-            ball = state.ball
-            if car.is_orange:
-                goal_y = -common_values.BACK_NET_Y
-            else:
-                goal_y = common_values.BACK_NET_Y
-
-            ball_vel = ball.linear_velocity
-            pos_diff = np.array([0, goal_y, 0]) - ball.position
-            dist = np.linalg.norm(pos_diff)
-            dir_to_goal = pos_diff / dist
             
-            vel_toward_goal = np.dot(ball_vel, dir_to_goal)
-            rewards[agent] = max(vel_toward_goal / common_values.BALL_MAX_SPEED, 0)
+            # reward speed toward ball
+            alignment = float(np.dot(car_phys.forward, dir_to_ball))
+            
+            shaped = max(speed_toward_ball / common_values.CAR_MAX_SPEED, 0.0)
+            
+            # distance based scaling
+            if dist > 500:  # far from ball
+                base_reward = shaped * 0.3
+            else:  # close to ball
+                base_reward = shaped * 0.2
+            
+            # penalize if circling around ball
+            if speed_toward_ball > 0 and alignment < 0.7:  # moving toward ball but misaligned
+                misalignment_penalty = (1.0 - alignment) * 0.15
+                rewards[agent] = base_reward - misalignment_penalty
+            else:
+                rewards[agent] = base_reward
+                
         return rewards
-""" 
 
+# reward when ball is touched
 class TouchReward(RewardFunction[AgentID, GameState, float]):
     def __init__(self):
         self._prev_touches = {}
@@ -84,6 +65,7 @@ class TouchReward(RewardFunction[AgentID, GameState, float]):
             self._prev_touches[agent] = cur
         return rewards
 
+# reward when using boost when the car is aligned with ball
 class BoostAlignmentReward(RewardFunction[AgentID, GameState, float]):
 
     def __init__(self, angle_threshold: float = 0.7,
@@ -123,6 +105,8 @@ class BoostAlignmentReward(RewardFunction[AgentID, GameState, float]):
             return self.penalty_value
         return 0.0
 
+
+# reward when car is facing ball
 class FacingBallReward(RewardFunction[AgentID, GameState, float]):
     def reset(self, agents: List[AgentID], initial_state: GameState, shared_info: Dict[str, Any]) -> None:
         pass
@@ -139,6 +123,36 @@ class FacingBallReward(RewardFunction[AgentID, GameState, float]):
             forward = car.physics.forward
             alignment = np.dot(forward, to_ball)
             rewards[agent] = max(0.0, alignment) * 0.05
+        return rewards
+
+# Reward when ball is pushed towards goal
+class BallToGoalReward(RewardFunction[AgentID, GameState, float]):
+    def reset(self, agents, initial_state, shared_info):
+        pass
+
+    def get_rewards(self, agents, state, is_terminated, is_truncated, shared_info):
+        rewards = {}
+        for agent in agents:
+            car = state.cars[agent]
+            ball = state.ball
+            
+            # Determine goal position based on team
+            if car.is_orange:
+                goal_y = -common_values.BACK_NET_Y
+            else:
+                goal_y = common_values.BACK_NET_Y
+            
+            ball_to_goal = np.array([0, goal_y, 0]) - ball.position
+            dist_to_goal = float(np.linalg.norm(ball_to_goal))
+            
+            if dist_to_goal < 1e-6:
+                rewards[agent] = 0.0
+                continue
+            
+            # distance reward the closer it is the higher reward is
+            goal_dist_normalized = 1.0 / (1.0 + dist_to_goal / 1000.0)
+            rewards[agent] = goal_dist_normalized * 0.05
+        
         return rewards
 
 class SteeringTowardBallReward(RewardFunction[AgentID, GameState, float]):

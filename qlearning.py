@@ -7,6 +7,7 @@ import time
 import csv
 import matplotlib.pyplot as plt
 from action_selector import select_action
+import os as os
 
 _prev_control = np.zeros(8, dtype=np.float32)
 
@@ -45,8 +46,10 @@ def train_qlearning(env_wrapper, raw_rlgym_env, config, lookup_table=None):
     epsilon = config.get("epsilon", 1.0)
     epsilon_min = config.get("epsilon_min", 0.1)
     epsilon_decay = config.get("epsilon_decay", 0.999)
-    num_episodes = config.get("num_episodes", 1000)
+    num_episodes = config.get("num_episodes", 2000)
     max_steps = config.get("max_steps", 5000)
+    dist_bucket = config.get("dist_bucket", 100.0)
+    speed_bucket = config.get("speed_bucket", 100.0)
 
     tbl = lookup_table
     if tbl is None:
@@ -75,7 +78,7 @@ def train_qlearning(env_wrapper, raw_rlgym_env, config, lookup_table=None):
         for ep in range(1, num_episodes + 1):
             obs = env_wrapper.reset()
             obs_agent = obs[0]
-            s = discretize_state(obs_agent, dist_bucket=500.0, speed_bucket=500.0)
+            s = discretize_state(obs_agent, dist_bucket=dist_bucket, speed_bucket=speed_bucket)
 
             # track cumulative ball_touches so we only count new touches
             agent_key = env_wrapper.agent_map[0]
@@ -94,6 +97,7 @@ def train_qlearning(env_wrapper, raw_rlgym_env, config, lookup_table=None):
             forward_action_count = 0
             time_to_first_touch = None
             had_terminated = False
+            states_visited = set([s])  # Track unique states in this episode
 
             while not done and steps < max_steps:
                 # use the steering aware selector
@@ -131,6 +135,7 @@ def train_qlearning(env_wrapper, raw_rlgym_env, config, lookup_table=None):
                         control_vec = smooth_control(env_vec)
                         shared_info = {"controls": {agent_key: control_vec}}
                         raw_rlgym_env.renderer.render(raw_rlgym_env.state, shared_info)
+                        #time.sleep(0.02)
                     except Exception as e:
                         print("Renderer error (non-fatal):", e)
 
@@ -161,12 +166,15 @@ def train_qlearning(env_wrapper, raw_rlgym_env, config, lookup_table=None):
 
                 # update state and Q
                 next_obs_agent = next_obs[0]
-                s_next = discretize_state(next_obs_agent, dist_bucket=500.0, speed_bucket=500.0)
+                s_next = discretize_state(next_obs_agent, dist_bucket=dist_bucket, speed_bucket=speed_bucket)
 
                 best_next = float(np.max(Q[s_next])) if s_next in Q else 0.0
+                
+                # Bellman Update Equation
                 Q[s][a_reduced] += alpha * (r + gamma * best_next - Q[s][a_reduced])
 
                 s = s_next
+                states_visited.add(s_next)  # track visited states
                 ep_return += r
 
                 # count only real new ball touches using the car's cumulative counter
@@ -205,7 +213,7 @@ def train_qlearning(env_wrapper, raw_rlgym_env, config, lookup_table=None):
             })
 
             if ep % 10 == 0:
-                print(f"Episode {ep}: return={ep_return:.3f}, touches={touches}, steps={steps}, epsilon={epsilon:.3f}")
+                print(f"Episode {ep}: return={ep_return:.3f}, touches={touches}, steps={steps}, epsilon={epsilon:.3f}, states_visited={len(states_visited)}")
                 recent = episode_stats[-10:]
                 if len(recent) > 0:
                     avg_touches = np.mean([e["touches"] for e in recent])
@@ -252,3 +260,97 @@ def train_qlearning(env_wrapper, raw_rlgym_env, config, lookup_table=None):
 
     return Q
 
+# visualise learned q-table
+def visualize_q_table(Q_dict_like, grid_h=None, grid_w=None, show=True, save_path=None):
+    Q_dict = dict(Q_dict_like)
+    if len(Q_dict) == 0:
+        print("Q-table empty, nothing to visualize.")
+        return
+
+    sample = next(iter(Q_dict.values()))
+    n_actions = len(sample)
+    n_states = len(Q_dict)
+
+    # state dimensions
+    max_d = 0
+    max_s = 0
+    for key in Q_dict.keys():
+        if isinstance(key, tuple) and len(key) >= 2:
+            d_bucket, s_bucket = key[0], key[1]
+            if isinstance(d_bucket, int) and isinstance(s_bucket, int):
+                max_d = max(max_d, d_bucket)
+                max_s = max(max_s, s_bucket)
+    
+    grid_h = (max_d + 1) if max_d >= 0 else 1
+    grid_w = (max_s + 1) if max_s >= 0 else 1
+    
+    # grids for max-Q, avg-Q, and visitation count
+    q_max_grid = np.full((grid_h, grid_w), np.nan, dtype=np.float32)
+    q_avg_grid = np.full((grid_h, grid_w), np.nan, dtype=np.float32)
+    visited_grid = np.zeros((grid_h, grid_w), dtype=np.int32)
+
+    for (d_bucket, s_bucket), qvals in Q_dict.items():
+        if not (isinstance(d_bucket, int) and isinstance(s_bucket, int)):
+            continue
+        if 0 <= d_bucket < grid_h and 0 <= s_bucket < grid_w:
+            q_max_grid[d_bucket, s_bucket] = float(np.max(qvals))
+            q_avg_grid[d_bucket, s_bucket] = float(np.mean(qvals))
+            visited_grid[d_bucket, s_bucket] = 1
+
+    q_max_plot = np.nan_to_num(q_max_grid, nan=0.0)
+    q_avg_plot = np.nan_to_num(q_avg_grid, nan=0.0)
+    
+    # summary
+    fig, axes = plt.subplots(1, 3, figsize=(16, 5))
+    
+    # Panel 1: Max Q-value heatmap (sparse)
+    im1 = axes[0].imshow(q_max_plot, cmap='viridis', interpolation='nearest', aspect='auto')
+    axes[0].set_title(f'Max Q-value per State\n(Grid: {grid_h}x{grid_w}, States: {n_states})')
+    axes[0].set_xlabel('Speed Bucket')
+    axes[0].set_ylabel('Distance Bucket')
+    plt.colorbar(im1, ax=axes[0], label='Q-value')
+    
+    # Panel 2: Average Q-value heatmap
+    im2 = axes[1].imshow(q_avg_plot, cmap='plasma', interpolation='nearest', aspect='auto')
+    axes[1].set_title('Average Q-value per State')
+    axes[1].set_xlabel('Speed Bucket')
+    axes[1].set_ylabel('Distance Bucket')
+    plt.colorbar(im2, ax=axes[1], label='Q-value')
+    
+    # Panel 3: State visitation heatmap
+    im3 = axes[2].imshow(visited_grid, cmap='Greys', interpolation='nearest', aspect='auto')
+    axes[2].set_title('Discovered States (1=visited, 0=never seen)')
+    axes[2].set_xlabel('Speed Bucket')
+    axes[2].set_ylabel('Distance Bucket')
+    plt.colorbar(im3, ax=axes[2], label='Visited')
+
+    plt.tight_layout()
+    
+    if save_path:
+        os.makedirs(save_path, exist_ok=True)
+        ts = int(time.time())
+        filename = f"qtable_{ts}.png"
+        outpath = os.path.join(save_path, filename)
+        fig.savefig(outpath, bbox_inches='tight', dpi=100)
+        print(f"Saved Q-table visualization to {outpath}")
+
+    if show:
+        plt.show()
+
+    # summary statistics
+    print(f"\n=== Q-Table Summary Statistics ===")
+    print(f"Total unique states discovered: {n_states}")
+    print(f"Grid dimensions: {grid_h} (distance) × {grid_w} (speed)")
+    print(f"Max Q-value: {np.max(q_max_plot):.4f}")
+    print(f"Mean Q-value: {np.mean(q_max_plot[q_max_plot > 0]):.4f}" if np.any(q_max_plot > 0) else "Mean Q-value: 0.0000")
+    print(f"Sparsity: {np.sum(visited_grid) / (grid_h * grid_w) * 100:.1f}% states explored")
+    
+    # Print per-distance statistics
+    print(f"\nPer-distance bucket analysis:")
+    for d in range(min(grid_h, 10)):
+        visited_count = np.sum(visited_grid[d, :])
+        if visited_count > 0:
+            max_q_vals = q_max_plot[d, visited_grid[d, :] > 0]
+            print(f"  Distance {d*100}-{(d+1)*100}: {visited_count} speed states, avg max-Q={np.mean(max_q_vals):.4f}")
+    if grid_h > 10:
+        print(f"  ... ({grid_h - 10} more distance buckets)")

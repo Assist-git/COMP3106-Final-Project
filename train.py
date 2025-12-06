@@ -5,13 +5,6 @@ import csv
 import os
 from datetime import datetime
 
-# lookup table mapping info to see actions
-from rlgym.rocket_league.action_parsers import LookupTableAction
-
-# parser = LookupTableAction()
-# for i, act in enumerate(parser._lookup_table[:20]):
-#    print(i, act)
-
 if __name__ == "__main__":
     # build both wrapper and raw env
     env_wrapper, raw_rlgym_env, lookup_table = build_rlgym_v2_env()
@@ -23,7 +16,6 @@ if __name__ == "__main__":
         "epsilon_min": 0.02, # min exploration
         "epsilon_decay": 0.9965, # decay per episode for exploration
         "num_episodes": 2000, # total training eps
-        "bucket_size": 1.0, # size of distance/speed buckets in discretization
         "max_steps": 5000, # max steps per ep
         "dist_bucket": 100.0, # dist bucket size
         "speed_bucket": 100.0, # speed bucket size

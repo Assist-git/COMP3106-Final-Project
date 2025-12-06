@@ -9,15 +9,18 @@ import matplotlib.pyplot as plt
 from action_selector import select_action
 import os as os
 
+# Global state for rendering control smoothing
 _prev_control = np.zeros(8, dtype=np.float32)
 
+# smooth control output for rendering using exponential moving average
+# this is to be able to see the smaller movements the car makes
 def smooth_control(new, alpha=0.4):
     global _prev_control
     new = np.array(new, dtype=np.float32)
     _prev_control = alpha * new + (1 - alpha) * _prev_control
     return _prev_control
 
-# lookup table parser helper function
+# extracts the action lookup table from various parser wrappers used by RLGym
 def get_lookup_table_from_parser(parser):
     # direct attributes
     for attr in ("lookup_table", "table", "_lookup_table"):
@@ -41,16 +44,18 @@ def get_lookup_table_from_parser(parser):
     return None
 
 def train_qlearning(env_wrapper, raw_rlgym_env, config, lookup_table=None):
-    alpha = config.get("alpha", 0.1)
-    gamma = config.get("gamma", 1.0)
+    # extract hyperparameters from config
+    alpha = config.get("alpha", 0.2)
+    gamma = config.get("gamma", 0.99)
     epsilon = config.get("epsilon", 1.0)
-    epsilon_min = config.get("epsilon_min", 0.1)
-    epsilon_decay = config.get("epsilon_decay", 0.999)
+    epsilon_min = config.get("epsilon_min", 0.02)
+    epsilon_decay = config.get("epsilon_decay", 0.9965)
     num_episodes = config.get("num_episodes", 2000)
     max_steps = config.get("max_steps", 5000)
     dist_bucket = config.get("dist_bucket", 100.0)
     speed_bucket = config.get("speed_bucket", 100.0)
 
+    # acquire lookup table from RLGym
     tbl = lookup_table
     if tbl is None:
         tbl = get_lookup_table_from_parser(raw_rlgym_env.action_parser)
@@ -60,14 +65,15 @@ def train_qlearning(env_wrapper, raw_rlgym_env, config, lookup_table=None):
     else:
         tbl = np.asarray(tbl)
 
-    allowed_env_actions = [12, 14, 16, 18]
+    # allowed reduced action set
+    allowed_env_actions = [12, 14, 16, 18] # forward left, forward, forward right, boost forward
 
-    # reduced env mappings
+    # bidirectional mapping between reduced action space and RLGym environment actions
     reduced_to_env = {i: env_idx for i, env_idx in enumerate(allowed_env_actions)}
     env_to_reduced = {env_idx: i for i, env_idx in reduced_to_env.items()}
     n_reduced = len(allowed_env_actions)
 
-    # Q uses reduced action space
+    # initialize Q-table: state -> [Q-values for each reduced action]
     Q = defaultdict(lambda: np.zeros(n_reduced, dtype=np.float32))
 
     obs = env_wrapper.reset()
@@ -76,11 +82,12 @@ def train_qlearning(env_wrapper, raw_rlgym_env, config, lookup_table=None):
 
     try:
         for ep in range(1, num_episodes + 1):
+            # reset environment and get initial state
             obs = env_wrapper.reset()
             obs_agent = obs[0]
             s = discretize_state(obs_agent, dist_bucket=dist_bucket, speed_bucket=speed_bucket)
 
-            # track cumulative ball_touches so we only count new touches
+            # track ball touches to detect new contact events
             agent_key = env_wrapper.agent_map[0]
             try:
                 car = raw_rlgym_env.state.cars[agent_key]
@@ -100,7 +107,7 @@ def train_qlearning(env_wrapper, raw_rlgym_env, config, lookup_table=None):
             states_visited = set([s])  # Track unique states in this episode
 
             while not done and steps < max_steps:
-                # use the steering aware selector
+                # select action using steering-aware ε-greedy policy
                 a_reduced, env_action = select_action(
                     s=s,
                     Q=Q,
@@ -116,19 +123,18 @@ def train_qlearning(env_wrapper, raw_rlgym_env, config, lookup_table=None):
                     angle_threshold=0.12
                 )
 
-                # step with env action index returned by selector
+                # step environment with the selected action
                 actions = np.array([[env_action]], dtype=np.int32)
                 next_obs, reward, terminated, truncated, info = env_wrapper.step(actions)
 
-
-                # normalize reward and done
+                # normalize reward and detect episode termination
                 r = normalize_reward(reward)
                 this_terminated = to_bool(terminated)
                 this_truncated = to_bool(truncated)
                 done = this_terminated or this_truncated
                 had_terminated = had_terminated or this_terminated
 
-                # visualize using env's lookup table
+                # render the environment using the action lookup table
                 if tbl is not None and steps % 4 == 0:
                     try:
                         env_vec = tbl[env_action]
@@ -139,7 +145,7 @@ def train_qlearning(env_wrapper, raw_rlgym_env, config, lookup_table=None):
                     except Exception as e:
                         print("Renderer error (non-fatal):", e)
 
-                # collect additional data (distance, alignment, forward-action)
+                # collect diagnostic metrics: distance to ball and alignment with ball direction
                 try:
                     car = raw_rlgym_env.state.cars[agent_key]
                     to_ball = raw_rlgym_env.state.ball.position - car.physics.position
@@ -164,13 +170,12 @@ def train_qlearning(env_wrapper, raw_rlgym_env, config, lookup_table=None):
                 except Exception:
                     pass
 
-                # update state and Q
+                # compute next state
                 next_obs_agent = next_obs[0]
                 s_next = discretize_state(next_obs_agent, dist_bucket=dist_bucket, speed_bucket=speed_bucket)
 
+                # bellman update: Q[s][a] += alpha * (r + gamma * max(Q[s_next]) - Q[s][a])
                 best_next = float(np.max(Q[s_next])) if s_next in Q else 0.0
-                
-                # Bellman Update Equation
                 Q[s][a_reduced] += alpha * (r + gamma * best_next - Q[s][a_reduced])
 
                 s = s_next
@@ -194,6 +199,7 @@ def train_qlearning(env_wrapper, raw_rlgym_env, config, lookup_table=None):
                 prev_ball_touches = current_touches
                 steps += 1
 
+            # decay epsilon for next episode
             epsilon = max(epsilon_min, epsilon * epsilon_decay)
 
             # per episode data
@@ -201,6 +207,7 @@ def train_qlearning(env_wrapper, raw_rlgym_env, config, lookup_table=None):
             avg_align = float(align_sum / steps) if steps > 0 else 0.0
             pct_forward = float(forward_action_count / steps) if steps > 0 else 0.0
 
+            # store episode stats
             episode_stats.append({
                 "episode": ep,
                 "return": ep_return,
@@ -271,7 +278,7 @@ def visualize_q_table(Q_dict_like, grid_h=None, grid_w=None, show=True, save_pat
     n_actions = len(sample)
     n_states = len(Q_dict)
 
-    # state dimensions
+    # grid dimensions from state space
     max_d = 0
     max_s = 0
     for key in Q_dict.keys():
@@ -289,6 +296,7 @@ def visualize_q_table(Q_dict_like, grid_h=None, grid_w=None, show=True, save_pat
     q_avg_grid = np.full((grid_h, grid_w), np.nan, dtype=np.float32)
     visited_grid = np.zeros((grid_h, grid_w), dtype=np.int32)
 
+    # populate grids from Q-table
     for (d_bucket, s_bucket), qvals in Q_dict.items():
         if not (isinstance(d_bucket, int) and isinstance(s_bucket, int)):
             continue
@@ -303,21 +311,21 @@ def visualize_q_table(Q_dict_like, grid_h=None, grid_w=None, show=True, save_pat
     # summary
     fig, axes = plt.subplots(1, 3, figsize=(16, 5))
     
-    # Panel 1: Max Q-value heatmap (sparse)
+    # Panel 1: Max Q-value heatmap (shows best learned action value per state)
     im1 = axes[0].imshow(q_max_plot, cmap='viridis', interpolation='nearest', aspect='auto')
     axes[0].set_title(f'Max Q-value per State\n(Grid: {grid_h}x{grid_w}, States: {n_states})')
     axes[0].set_xlabel('Speed Bucket')
     axes[0].set_ylabel('Distance Bucket')
     plt.colorbar(im1, ax=axes[0], label='Q-value')
     
-    # Panel 2: Average Q-value heatmap
+    # Panel 2: Average Q-value heatmap (shows mean Q-value across actions per state)
     im2 = axes[1].imshow(q_avg_plot, cmap='plasma', interpolation='nearest', aspect='auto')
     axes[1].set_title('Average Q-value per State')
     axes[1].set_xlabel('Speed Bucket')
     axes[1].set_ylabel('Distance Bucket')
     plt.colorbar(im2, ax=axes[1], label='Q-value')
     
-    # Panel 3: State visitation heatmap
+    # Panel 3: State visitation heatmap (shows which states were discovered)
     im3 = axes[2].imshow(visited_grid, cmap='Greys', interpolation='nearest', aspect='auto')
     axes[2].set_title('Discovered States (1=visited, 0=never seen)')
     axes[2].set_xlabel('Speed Bucket')
@@ -326,6 +334,7 @@ def visualize_q_table(Q_dict_like, grid_h=None, grid_w=None, show=True, save_pat
 
     plt.tight_layout()
     
+    # save figure
     if save_path:
         os.makedirs(save_path, exist_ok=True)
         ts = int(time.time())
